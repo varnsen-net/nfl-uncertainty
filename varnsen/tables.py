@@ -201,54 +201,96 @@ def RollingMeans(data:pd.DataFrame) -> pd.DataFrame:
 			.groupby([side, 'week'])
 			.agg(func=['count', 'sum'])
 		)
-		rolling_stats = pd.DataFrame()
+		
+		# TODO: split off to its own function
+		# calculate the rolling sums for each team
+		rolling_sums = pd.DataFrame()
 		for name in grouped.index.get_level_values(0).unique():
 			rolled = grouped.loc[name].expanding().sum()
 			new_idx = [(name,week) for week in rolled.index]
 			rolled.index = pd.MultiIndex.from_tuples(new_idx)
-			rolling_stats = pd.concat([rolling_stats, rolled])
-		metrics = rolling_stats.columns.get_level_values(0).unique()
+			rolling_sums = pd.concat([rolling_sums, rolled])
+
+		# convert rolling sums to rolling means
 		rolling_means = pd.DataFrame()
+		metrics = rolling_sums.columns.get_level_values(0).unique()
 		for m in metrics:
-			rolling_means[f"{side}_{m}"] = rolling_stats[m]['sum'] / rolling_stats[m]['count']
+			rolling_means[f"{side}_{m}"] = rolling_sums[m]['sum'] / rolling_sums[m]['count']
 		rolling_means.index.names = ['team', 'week']
 		season_rolling_means = pd.concat([season_rolling_means, rolling_means], axis=1)
 	return season_rolling_means
 
+def CalculatePythagExp(data:pd.DataFrame):
+	"""Calculate the Pythagorean expectation for each team.
+	
+	https://en.wikipedia.org/wiki/Pythagorean_expectation#Use_in_the_National_Football_League
+	"""
+	cols = ['week', 'home_team', 'away_team', 'total_home_score', 'total_away_score']
+	data = data[cols].dropna()
+	remapper = {
+		'home' : {'total_home_score':'pf', 'total_away_score':'pa'},
+		'away' : {'total_away_score':'pf', 'total_home_score':'pa'},
+	}
+
+	# get points for/against for each team for each week
+	all_games = pd.DataFrame()
+	for side in remapper.keys():
+		games = (
+			data
+			.groupby([f"{side}_team", 'week'])
+			.last()
+			.rename(columns=remapper[side])
+			[['pf', 'pa']]
+		)
+		games.index.names = ['team', 'week']
+		all_games = pd.concat([all_games, games])
+	all_games = all_games.sort_index()
+
+	# TODO: split off to its own function
+	# calculate the rolling sums for each team
+	rolling_sums = pd.DataFrame()
+	for name in all_games.index.get_level_values(0).unique():
+		rolled = all_games.loc[name].expanding().sum()
+		new_idx = [(name,week) for week in rolled.index]
+		rolled.index = pd.MultiIndex.from_tuples(new_idx)
+		rolling_sums = pd.concat([rolling_sums, rolled])
+
+	# calculate the rolling Pythagorean expectation
+	numerator = rolling_sums['pf']**2.37
+	denominator = rolling_sums['pf']**2.37 + rolling_sums['pa']**2.37
+	pyexp = numerator / denominator
+	return pyexp
+
 if __name__ == "__main__":
-	raw_data = pd.read_parquet('../season-data/2022-season.parquet')
-	data = ReduceToStandardSituations(raw_data)
-	fields = [
-		'epa',
-		'air_epa',
-		'yac_epa',
-		'wpa',
-		'air_wpa',
-		'yac_wpa',
-		'vegas_wpa',
-		'interception',
-		'fumble',
-		'qb_hit',
-	]
-	data = ReduceToFields(data, fields)
-	rolling_means = RollingMeans(data)
-	print(rolling_means)
-	# full_train_data = pd.DataFrame()
-	# for season in range(2021, 2022):
-		# print(f"fetching {season} season data")
-		# raw_data = FetchPlayByPlayData(season)
-		# standard_plays = ReduceToStandardSituations(raw_data)
-		# fields = ['epa', 'wpa', 'interception', 'fumble']
-		# standard_plays = ReduceToFields(standard_plays, fields)
-		# cumulative_rates = ComputeCumulativeRatesFromRawPBP(standard_plays)
-		# game_outcomes = (   # TODO: move this to its own function
-			# raw_data
-			# .groupby('game_id').last()
-			# [['home_team', 'away_team', 'total_home_score', 'total_away_score', 'week']]
-			# .query('4 <= week <=14')
-		# )
-		# shuffled_game_outcomes = ShuffleHomeAwayTeams(game_outcomes)
-		# training_data = CreateLabeledTrainingData(shuffled_game_outcomes, cumulative_rates)
-		# full_train_data = pd.concat([full_train_data, training_data])
-	# print(full_train_data)
-	# full_train_data.to_csv('./train.csv')
+	full_train_data = pd.DataFrame()
+	for year in range(2010,2022):
+		raw_data = pd.read_parquet(f"../pbp-data/{year}-season.parquet")
+		data = ReduceToStandardSituations(raw_data)
+		fields = [
+			'epa',
+			'air_epa',
+			'yac_epa',
+			'wpa',
+			'air_wpa',
+			'yac_wpa',
+			'vegas_wpa',
+			'interception',
+			'fumble',
+			'qb_hit',
+		]
+		data = ReduceToFields(data, fields)
+		rolling_stats = RollingMeans(data)
+		pyexp = CalculatePythagExp(raw_data)
+		rolling_stats['pyexp'] = pyexp
+		game_outcomes = (   # TODO: move this to its own function
+			raw_data
+			.groupby('game_id').last()
+			[['home_team', 'away_team', 'total_home_score', 'total_away_score', 'week']]
+			.query('4 <= week <=14')
+		)
+		shuffled_game_outcomes = ShuffleHomeAwayTeams(game_outcomes)
+		training_data = CreateLabeledTrainingData(shuffled_game_outcomes, rolling_stats)
+		full_train_data = pd.concat([full_train_data, training_data])
+	print(full_train_data)
+	# full_train_data.to_csv('../train.csv')
+

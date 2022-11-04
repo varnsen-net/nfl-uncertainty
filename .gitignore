@@ -1,4 +1,5 @@
 figures/
-season-data/
+pbp-data/
 __pycache__/
 varnsen/__pycache__/
+train.csv

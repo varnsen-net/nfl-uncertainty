@@ -13,7 +13,7 @@ import timeit
 # preprocessing
 sides = ['posteam', 'defteam']
 metrics = ['epa', 'wpa']
-data = pd.read_parquet('./season-data/2022-season.parquet')
+data = pd.read_parquet('./pbp-data/2022-season.parquet')
 win_rates = vtb.MapTeamWinRates(data)
 data = vtb.ReduceToStandardSituations(data, half_seconds_remaining=0, sd=99)
 data = data.loc[:,sides + metrics]
