@@ -4,6 +4,9 @@ from sklearn.linear_model import LogisticRegression
 from varnsen.tables import RollingPythagExp
 import requests
 from joblib import load
+import matplotlib.pyplot as plt
+import seaborn as sns
+import varnsen.plot as vplt
 
 # keys
 odds_api_key = 'b8b2a510ac6e624db9398f91de84a338'
@@ -87,3 +90,11 @@ if __name__ == "__main__":
     current_odds['home_edge'] = current_odds['home_prob'] - current_odds['home_implied']
     current_odds['away_edge'] = current_odds['away_prob'] - current_odds['away_implied']
     print(current_odds)
+    
+    sns.set_palette('hellafresh')
+    fig, ax = plt.subplots(figsize=(3.5,3))
+    ax.plot([0,1], [0,1])
+    ax.plot(current_odds['home_implied'], current_odds['home_edge']+current_odds['home_implied'], 'o', ms=2, label='Home')
+    ax.plot(current_odds['away_implied'], current_odds['away_edge']+current_odds['away_implied'], 'o', ms=2, label='Away')
+    plt.tight_layout()
+    plt.show()

@@ -74,7 +74,7 @@ ax['C'].plot(prob_true, prob_pred)
 ax['C'].plot([0,1], [0,1])
 
 plt.tight_layout()
-# plt.show()
+plt.show()
 
 # retrain on all data and save model
 pyexps = pd.concat([data['obj_pyexp'], data['adv_pyexp']]).values.reshape(-1,1)
