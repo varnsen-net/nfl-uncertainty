@@ -1,100 +1,92 @@
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from varnsen.tables import RollingPythagExp
+from varnsen.tables import RollingPythagExp, FetchLatestWeek
 import requests
 from joblib import load
 import matplotlib.pyplot as plt
 import seaborn as sns
 import varnsen.plot as vplt
+import varnsen.odds as vodds
 
 # keys
-odds_api_key = 'b8b2a510ac6e624db9398f91de84a338'
+odds_api_key = '6d64fa77e4e4a3fb13a2960d03824fd4'
 
-# load data
+# load pythagorean expectation data
 pbp_data = pd.read_parquet('./pbp-data/2022-season.parquet')
-teams = pd.read_csv('./errata/nfl-teams.csv')
-team_name_map = dict(zip(teams['Name'], teams['Abbreviation']))
+pythag_exp = RollingPythagExp(pbp_data)
+latest_pythag_exp = FetchLatestWeek(pythag_exp)
 
-# TODO: move these functions to a separate file
-def FetchLeagueOddsFromAPI(odds_api_key):
-    url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
-    regions = 'us'
-    markets = 'h2h'
-    odds_format = 'american'
-    date_format = 'iso'
-    bookmakers = 'bovada'
-    response = requests.get(
-        url = url,
-        params = {
-            'api_key' : odds_api_key,
-            # 'regions' : regions,
-            'markets' : markets,
-            'oddsFormat' : odds_format,
-            'dateFormat' : date_format,
-            'bookmakers' : bookmakers,
-        }
+# transform pythagorean expectation data
+scaler = load('./models/baseline-scaler.joblib')
+latest_pythag_exp = (latest_pythag_exp - scaler.mean_) / scaler.scale_
+
+# load odds data
+response = vodds.FetchLeagueOddsFromAPI(odds_api_key, bookmaker='bovada')
+current_odds = vodds.FetchCurrentOdds(response)
+current_odds['is_home'] = 1
+home_teams = current_odds['home'].values
+away_teams = current_odds['away'].values
+current_odds['obj_pyexp'] = latest_pythag_exp.loc[home_teams].values
+current_odds['adv_pyexp'] = latest_pythag_exp.loc[away_teams].values
+
+# predict upcoming game probabilities
+model = load('./models/baseline-logistic-regression.joblib')
+x = current_odds[['obj_pyexp', 'adv_pyexp', 'is_home']]
+current_odds['home_prob'] = model.predict_proba(x)[:,1]
+current_odds['away_prob'] = 1 - current_odds['home_prob']
+
+# calculate implied probabilities and expected value for each bet
+current_odds['home_implied'] = [vodds.CalculateImpliedOdds(odds) for odds in current_odds['home_line']]
+current_odds['away_implied'] = [vodds.CalculateImpliedOdds(odds) for odds in current_odds['away_line']]
+current_odds['home_edge'] = current_odds['home_prob'] - current_odds['home_implied']
+current_odds['away_edge'] = current_odds['away_prob'] - current_odds['away_implied']
+
+# plot predicted odds vs implied odds
+home_data = current_odds[['home', 'home_prob', 'home_implied']]
+home_data.columns = ['team', 'prob', 'implied']
+away_data = current_odds[['away', 'away_prob', 'away_implied']]
+away_data.columns = ['team', 'prob', 'implied']
+scatter_data = pd.concat([home_data, away_data]).set_index('team')
+print(scatter_data.index)
+sns.set_palette('hellafresh')
+fig, ax = plt.subplot_mosaic(
+    "AB",
+    figsize=(5.8,3),
+)
+ax['A'].plot([0,1], [0,1], '--', zorder=0)
+for i in range(len(scatter_data)):
+    name = scatter_data.index[i]
+    ax['A'].text(
+        scatter_data.iloc[i]['implied'], scatter_data.iloc[i]['prob'],
+        s=name,
+        ha='center',
+        va='center',
+        color=f"#{vplt.team_colors[name]}",
+        fontweight='bold',
+        fontsize=5,
+        zorder=1,
     )
-    return response
+ax['A'].set(
+    xlim=(0,1),
+    ylim=(0,1),
+    xlabel = 'Implied probability',
+    ylabel = 'Predicted probability',
+    title = 'Model-generated probabilities vs implied-odds probabilities\nfor NFL week 10 matchups',
+)
 
-def FetchLatestWeek(data:pd.DataFrame) -> pd.DataFrame:
-    team_names = data.index.get_level_values(0).unique()
-    most_recent_data = pd.concat([data.loc[name].tail(1) for name in team_names])
-    most_recent_data.index = team_names
-    return most_recent_data
+# bar plot of home and away edge
+bar_data = scatter_data['prob'] - scatter_data['implied']
+bar_data = bar_data.sort_values()
+print(bar_data)
+drange = range(1,len(bar_data)+1)
+ax['B'].barh(drange, bar_data, tick_label=bar_data.index, linewidth=0)
+ax['B'].set(
+    xlabel = 'Expected value per betting unit',
+    ylabel = 'Team',
+    title = 'Expected value of available week 10 moneylines',
+)
 
-def ExtractGameInfo(game_odds:dict):
-    tipoff = game_odds['commence_time']
-    home_team = game_odds['home_team']
-    away_team = game_odds['away_team']
-    markets = game_odds['bookmakers'][0]['markets'][0]
-    h2h_outcomes = markets['outcomes']
-    home_h2h = [f['price'] for f in h2h_outcomes if f['name'] == home_team][0]
-    away_h2h = [f['price'] for f in h2h_outcomes if f['name'] == away_team][0]
-    return (tipoff, team_name_map[home_team], home_h2h, team_name_map[away_team], away_h2h)
-
-def FetchCurrentOdds(response):
-    games = response.json()
-    games = [g for g in games if len(g['bookmakers']) > 0]
-    current_odds = [ExtractGameInfo(g) for g in games]
-    current_odds = pd.DataFrame(current_odds)
-    current_odds.columns = ['tipoff', 'home', 'home_line', 'away', 'away_line']
-    return current_odds
-
-def CalculateImpliedOdds(odds:int):
-    if odds < 0:
-        odds = abs(odds)
-        implied_odds = odds / (100 + odds)
-    else:
-        implied_odds = 100 / (100 + odds)
-    return implied_odds
-
-if __name__ == "__main__":
-    scaler = load('./models/baseline-scaler.joblib')
-    pythag_exp = RollingPythagExp(pbp_data)
-    latest_pythag_exp = FetchLatestWeek(pythag_exp)
-    latest_pythag_exp = (latest_pythag_exp - scaler.mean_) / scaler.scale_
-    response = FetchLeagueOddsFromAPI(odds_api_key)
-    current_odds = FetchCurrentOdds(response)
-    current_odds['is_home'] = 1
-    home_teams = current_odds['home'].values
-    away_teams = current_odds['away'].values
-    current_odds['obj_pyexp'] = latest_pythag_exp.loc[home_teams].values
-    current_odds['adv_pyexp'] = latest_pythag_exp.loc[away_teams].values
-    model = load('./models/baseline-logistic-regression.joblib')
-    x = current_odds[['obj_pyexp', 'adv_pyexp', 'is_home']]
-    current_odds['home_prob'] = model.predict_proba(x)[:,1]
-    current_odds['away_prob'] = 1 - current_odds['home_prob']
-    current_odds['home_implied'] = [CalculateImpliedOdds(odds) for odds in current_odds['home_line']]
-    current_odds['away_implied'] = [CalculateImpliedOdds(odds) for odds in current_odds['away_line']]
-    current_odds['home_edge'] = current_odds['home_prob'] - current_odds['home_implied']
-    current_odds['away_edge'] = current_odds['away_prob'] - current_odds['away_implied']
-    print(current_odds)
-    
-    sns.set_palette('hellafresh')
-    fig, ax = plt.subplots(figsize=(3.5,3))
-    ax.plot([0,1], [0,1])
-    ax.plot(current_odds['home_implied'], current_odds['home_edge']+current_odds['home_implied'], 'o', ms=2, label='Home')
-    ax.plot(current_odds['away_implied'], current_odds['away_edge']+current_odds['away_implied'], 'o', ms=2, label='Away')
-    plt.tight_layout()
-    plt.show()
+plt.tight_layout()
+plt.savefig('./figures/week-10-probabilities.png')
+# plt.show()

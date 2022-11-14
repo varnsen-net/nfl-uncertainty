@@ -54,10 +54,6 @@ for name in win_rates.index:
         zorder=1
     )
 ax.set(
-    # xticks = [],
-    # yticks = [],
-    # xlim = (-0.2, 0.2),
-    # ylim = (0.3, -0.3),
     xlabel = 'EPA per play',
     ylabel = 'WPA per play',
     title = 'Average team WPA per play vs average team EPA per play\n(marker size is proportional to win/loss percentage)'

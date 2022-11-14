@@ -262,6 +262,17 @@ def RollingPythagExp(data:pd.DataFrame):
     pyexp = numerator / denominator
     return pyexp
 
+def FetchLatestWeek(data:pd.DataFrame) -> pd.DataFrame:
+    """
+    Get the latest week of features for each team.
+    
+    Dataframe must have multi-index of (team, week).
+    """
+    team_names = data.index.get_level_values(0).unique()
+    most_recent_data = pd.concat([data.loc[name].tail(1) for name in team_names])
+    most_recent_data.index = team_names
+    return most_recent_data
+
 if __name__ == "__main__":
     full_train_data = pd.DataFrame()
     for year in range(2002,2022):

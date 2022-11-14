@@ -11,6 +11,22 @@ from joblib import dump, load
 
 # load data
 data = pd.read_csv('./train.csv', index_col=0)
+pyexps = pd.concat([data['obj_pyexp'], data['adv_pyexp']]).values.reshape(-1,1)
+scaled = StandardScaler().fit_transform(pyexps)
+fig, ax = plt.subplot_mosaic(
+    "AB",
+    figsize=(5.5,2.3),
+    sharey=True,
+)
+sns.histplot(pyexps, kde=True, legend=False, ax=ax['A'])
+ax['A'].set_xlabel('Pythagorean expectation')
+ax['A'].set_title('Distribution of Pythagorean expectations\nfor every team and week of NFL seasons 2002-2021')
+sns.histplot(scaled, kde=True, legend=False, ax=ax['B'])
+ax['B'].set_xlabel('Pythagorean expectation')
+ax['B'].set_title('Distribution of z-score normalized Pythagorean expectations')
+plt.tight_layout()
+plt.savefig('./figures/baseline-model-feature-distributions.png')
+plt.show()
 
 # split into training and validation data
 train = data.copy().iloc[:-1000]
@@ -28,7 +44,7 @@ validation['adv_pyexp'] = scaler.transform(validation['adv_pyexp'].values.reshap
 x = train[['obj_pyexp', 'adv_pyexp', 'is_home']]
 y = train['obj_team_win']
 model = LogisticRegression(solver='liblinear')
-cv = ShuffleSplit(n_splits=1000, test_size=0.25)
+cv = ShuffleSplit(n_splits=10, test_size=0.25)
 scores = cross_val_score(
     model,
     x,y,
@@ -40,11 +56,13 @@ scores = cross_val_score(
 mosaic = "AA;BC"
 fig, ax = plt.subplot_mosaic(
     mosaic,
-    figsize=(3.5,3),
+    figsize=(3.6,3.6),
 )
 
 # plot histogram of cross-validated scores
 sns.histplot(scores, kde=True, ax=ax['A'])
+ax['A'].set_xlabel('Brier score')
+ax['A'].set_title('Cross-validated Brier scores')
 
 # plot calibration curve for training data
 model.fit(x,y)
@@ -58,6 +76,9 @@ prob_pred, prob_true = calibration_curve(
 )
 ax['B'].plot(prob_true, prob_pred)
 ax['B'].plot([0,1], [0,1])
+ax['B'].set_xlabel('True probability')
+ax['B'].set_ylabel('Predicted probability')
+ax['B'].set_title('Calibration curve (training data)')
 
 # plot calibration curve for validation data
 x_val = validation[['obj_pyexp', 'adv_pyexp', 'is_home']]
@@ -72,18 +93,18 @@ prob_pred, prob_true = calibration_curve(
 )
 ax['C'].plot(prob_true, prob_pred)
 ax['C'].plot([0,1], [0,1])
+ax['C'].set_xlabel('True probability')
+ax['C'].set_title('Calibration curve (validation data)')
 
-plt.tight_layout()
-plt.show()
+# plt.tight_layout()
+# plt.savefig('./figures/baseline-model-validation.png')
 
 # retrain on all data and save model
-pyexps = pd.concat([data['obj_pyexp'], data['adv_pyexp']]).values.reshape(-1,1)
-scaler = StandardScaler().fit(pyexps)
-x = data[['obj_pyexp', 'adv_pyexp', 'is_home']].copy()
-y = data['obj_team_win'].copy()
-x['obj_pyexp'] = scaler.transform(x['obj_pyexp'].values.reshape(-1,1))
-x['adv_pyexp'] = scaler.transform(x['adv_pyexp'].values.reshape(-1,1))
-model = LogisticRegression(solver='liblinear')
-model.fit(x,y)
-dump(model, './models/baseline-logistic-regression.joblib')
-dump(scaler, './models/baseline-scaler.joblib')
+# x = data[['obj_pyexp', 'adv_pyexp', 'is_home']].copy()
+# y = data['obj_team_win'].copy()
+# x['obj_pyexp'] = scaler.transform(x['obj_pyexp'].values.reshape(-1,1))
+# x['adv_pyexp'] = scaler.transform(x['adv_pyexp'].values.reshape(-1,1))
+# model = LogisticRegression(solver='liblinear')
+# model.fit(x,y)
+# dump(model, './models/baseline-logistic-regression.joblib')
+# dump(scaler, './models/baseline-scaler.joblib')
